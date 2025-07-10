@@ -1,37 +1,37 @@
 package elasticp_test
 
 import (
-	"fmt"
 	"github.com/DiogoJunqueiraGeraldo/elasticp"
 	"github.com/stretchr/testify/assert"
-	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
-	"time"
 )
 
-func TestDX(t *testing.T) {
-	pool := elasticp.New(elasticp.NewConfig(
-		elasticp.WithDebug(false),
-	))
+func GetPool() *elasticp.ElasticPool {
+	pool := elasticp.New(16, 8)
+
 	pool.Start()
 
-	count := 0
-	m := sync.Mutex{}
-	wantCount := 1_000_000
+	return pool
+}
 
-	fmt.Println("Before Goroutines Count:", runtime.NumGoroutine())
+func TestDX(t *testing.T) {
+	pool := GetPool()
+
+	var count atomic.Int64
+	var wg sync.WaitGroup
+
+	wantCount := 2_000_000
+
 	for i := 0; i < wantCount; i++ {
+		wg.Add(1)
 		pool.Go(func() {
-			m.Lock()
-			count++
-			m.Unlock()
+			defer wg.Done()
+			count.Add(1)
 		})
 	}
+	wg.Wait()
 
-	fmt.Println("Immediately After Goroutines Count:", runtime.NumGoroutine())
-	time.Sleep(2 * time.Second)
-	fmt.Println("Two Sec After Goroutines Count:", runtime.NumGoroutine())
-
-	assert.Equal(t, wantCount, count)
+	assert.Equal(t, int64(wantCount), count.Load())
 }
