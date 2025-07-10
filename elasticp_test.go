@@ -1,48 +1,37 @@
 package elasticp_test
 
 import (
-	"context"
+	"fmt"
 	"github.com/DiogoJunqueiraGeraldo/elasticp"
 	"github.com/stretchr/testify/assert"
+	"runtime"
 	"sync"
 	"testing"
+	"time"
 )
 
-func TestElasticTest(t *testing.T) {
-	ep := elasticp.New[int, int]()
+func TestDX(t *testing.T) {
+	pool := elasticp.New(elasticp.NewConfig(
+		elasticp.WithDebug(false),
+	))
+	pool.Start()
 
-	ep.Launch(1024)
-	ep.Grow(1024)
+	count := 0
+	m := sync.Mutex{}
+	wantCount := 1_000_000
 
-	// it will take a while to shut down the goroutines
-	// may spice cpu usage due to heavy comparisons (proportional to pool size)
-	ep.Shrink(1024)
+	fmt.Println("Before Goroutines Count:", runtime.NumGoroutine())
+	for i := 0; i < wantCount; i++ {
+		pool.Go(func() {
+			m.Lock()
+			count++
+			m.Unlock()
+		})
+	}
 
-	gotSize := ep.Size()
-	wantSize := 1024
+	fmt.Println("Immediately After Goroutines Count:", runtime.NumGoroutine())
+	time.Sleep(2 * time.Second)
+	fmt.Println("Two Sec After Goroutines Count:", runtime.NumGoroutine())
 
-	assert.Equal(t, wantSize, gotSize)
-}
-
-type IncrOperation struct{}
-
-func (op *IncrOperation) Execute(_ context.Context, input *int, output *int) {
-	*output = *input + 1
-}
-
-func TestTestSubmitWorkUnit(t *testing.T) {
-	ep := elasticp.New[int, int]()
-	ep.Launch(10)
-
-	inp := 10
-	out := 0
-
-	wg := sync.WaitGroup{}
-	op := IncrOperation{}
-	wg.Add(1)
-	wu := elasticp.NewWorkUnit[int, int](context.Background(), &op, &inp, &out, &wg)
-	ep.Submit(wu)
-	wg.Wait()
-
-	assert.Equal(t, out, inp+1)
+	assert.Equal(t, wantCount, count)
 }
