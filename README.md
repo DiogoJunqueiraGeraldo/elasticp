@@ -24,7 +24,7 @@ brew install graphviz
 
 Run microbenchmark
 ```shell
-elasticp % go test -bench=. -benchtime=3s -count=1 -benchmem -cpuprofile=cpu.prof -memprofile=mem.prof
+go test -bench=. -benchtime=3s -count=1 -benchmem -cpuprofile=cpu.prof -memprofile=mem.prof
 ```
 
 ```shell
@@ -35,16 +35,23 @@ go tool pprof -http=: mem.prof
 go tool pprof -http=: cpu.prof
 ```
 
-### Results
+Available benchmarks:
 
+| Benchmark                          | Description                                              |
+| ---------------------------------- | -------------------------------------------------------- |
+| `BenchmarkSequential100kTasks`     | Runs all tasks sequentially, without goroutines          |
+| `BenchmarkRawGoroutines_100kTasks` | Spawns 100,000 native goroutines for 100,000 small tasks |
+| `BenchmarkElasticpPool100kTasks`   | Uses the pool to dispatch 100,000 parallel tasks         |
+
+### Results
 ```shell
-cpu: Apple M3
 BenchmarkSequential100kTasks-8              3946            834117 ns/op        16007171 B/op          1 allocs/op
 BenchmarkRawGoroutines_100kTasks-8           310          11590516 ns/op        24007883 B/op     100003 allocs/op
 BenchmarkElasticpPool100kTasks-8             542           6619665 ns/op        16007207 B/op          2 allocs/op
 ```
 
-These test how the pool performs when handling **100,000 parallel / or sequential tasks** operating on shared memory ranges.
+This benchmark setup shows how `elasticp` handles **100,000 concurrent tasks** working over shared memory — and how it compares against both sequential and native goroutine execution models.
+
 ---
 
 ### 🧬 Task Model
