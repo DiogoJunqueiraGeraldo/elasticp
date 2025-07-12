@@ -10,16 +10,8 @@ type Task struct {
 	Wg     *sync.WaitGroup
 }
 
-type Executor interface {
-	Execute(Task)
-}
-
-type Worker struct {
-	taskCh chan Task
-}
-
 type Pool struct {
-	workers []Worker
+	workers []chan Task
 	c       uint
 	m       *sync.RWMutex
 }
@@ -28,7 +20,7 @@ func New() *Pool {
 	var rw sync.RWMutex
 
 	return &Pool{
-		workers: make([]Worker, 0, 32),
+		workers: make([]chan Task, 0, 32),
 		c:       0,
 		m:       &rw,
 	}
@@ -38,12 +30,12 @@ func (p *Pool) Grow(amount int) {
 	p.m.Lock()
 	defer p.m.Unlock()
 	for range amount {
-		taskCh := make(chan Task, 1024)
+		worker := make(chan Task, 1024)
 
 		go func() {
 			for {
 				select {
-				case task, ok := <-taskCh:
+				case task, ok := <-worker:
 					if !ok {
 						return
 					}
@@ -56,9 +48,7 @@ func (p *Pool) Grow(amount int) {
 			}
 		}()
 
-		p.workers = append(p.workers, Worker{
-			taskCh: taskCh,
-		})
+		p.workers = append(p.workers, worker)
 	}
 }
 
@@ -66,8 +56,13 @@ func (p *Pool) Shrink(amount int) {
 	p.m.Lock()
 	defer p.m.Unlock()
 
-	nSize := max(len(p.workers)-amount, 0)
-	p.workers = append(make([]Worker, nSize), p.workers[:nSize]...)
+	oSize := len(p.workers)
+	nSize := max(oSize-amount, 0)
+	for i := nSize; i < oSize; i++ {
+		close(p.workers[i])
+	}
+
+	p.workers = append(make([]chan Task, nSize), p.workers[:nSize]...)
 }
 
 func (p *Pool) Size() int {
@@ -77,17 +72,19 @@ func (p *Pool) Size() int {
 }
 
 func (p *Pool) Submit(task Task) {
-	wLen := len(p.workers)
-	for i := 0; i < wLen; i++ {
-		p.c++
-		i := int(p.c) % wLen
+	for i := 0; i < len(p.workers); i++ {
 		select {
-		case p.workers[i].taskCh <- task:
+		case p.nextWorker() <- task:
 			// scheduled
 			return
 		default:
 			// let it go through
 		}
 	}
-	p.workers[int(p.c)%wLen].taskCh <- task
+	p.nextWorker() <- task
+}
+
+func (p *Pool) nextWorker() chan Task {
+	p.c++
+	return p.workers[int(p.c)%len(p.workers)]
 }
