@@ -1,39 +1,93 @@
 package elasticp
 
 import (
-	"sync/atomic"
+	"sync"
 )
 
-type ElasticPool struct {
-	workers    []chan func()
-	nextWorker *atomic.Uint32
-	buff       int
+type Task struct {
+	Input  []float64
+	Output []float64
+	Wg     *sync.WaitGroup
 }
 
-func New(size int, buff int) *ElasticPool {
-	return &ElasticPool{
-		workers:    make([]chan func(), size),
-		nextWorker: &atomic.Uint32{},
-		buff:       buff,
+type Executor interface {
+	Execute(Task)
+}
+
+type Worker struct {
+	taskCh chan Task
+}
+
+type Pool struct {
+	workers []Worker
+	c       uint
+	m       *sync.RWMutex
+}
+
+func New() *Pool {
+	var rw sync.RWMutex
+
+	return &Pool{
+		workers: make([]Worker, 0, 32),
+		c:       0,
+		m:       &rw,
 	}
 }
 
-func (p *ElasticPool) Start() {
-	for i := 0; i < len(p.workers); i++ {
-		workCh := make(chan func(), p.buff)
-		p.workers[i] = workCh
+func (p *Pool) Grow(amount int) {
+	p.m.Lock()
+	defer p.m.Unlock()
+	for range amount {
+		taskCh := make(chan Task, 1024)
 
-		go func(ch <-chan func()) {
-			for f := range ch {
-				f()
+		go func() {
+			for {
+				select {
+				case task, ok := <-taskCh:
+					if !ok {
+						return
+					}
+
+					for i, v := range task.Input {
+						task.Output[i] += v
+					}
+					task.Wg.Done()
+				}
 			}
-		}(workCh)
+		}()
+
+		p.workers = append(p.workers, Worker{
+			taskCh: taskCh,
+		})
 	}
 }
 
-func (p *ElasticPool) Go(f func()) {
-	workerCount := len(p.workers)
-	nextWorker := p.nextWorker.Add(1)
-	i := int(nextWorker) % workerCount
-	p.workers[i] <- f
+func (p *Pool) Shrink(amount int) {
+	p.m.Lock()
+	defer p.m.Unlock()
+
+	nSize := max(len(p.workers)-amount, 0)
+	p.workers = append(make([]Worker, nSize), p.workers[:nSize]...)
+}
+
+func (p *Pool) Size() int {
+	p.m.RLock()
+	defer p.m.RUnlock()
+	return len(p.workers)
+}
+
+func (p *Pool) Submit(task Task) {
+	wLen := len(p.workers)
+	for i := 0; i < wLen; i++ {
+		p.c++
+		i := int(p.c) % wLen
+		select {
+		case p.workers[i].taskCh <- task:
+			// scheduled
+			return
+		default:
+			// let it go through
+		}
+	}
+	p.workers[int(p.c)%wLen].taskCh <- task
 }
